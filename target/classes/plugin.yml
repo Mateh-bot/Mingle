@@ -1,0 +1,7 @@
+name: Mingle
+version: '1.0-SNAPSHOT'
+main: org.mateh.mingle.Main
+api-version: '1.20'
+commands:
+  mingle:
+    description: Start Game
