@@ -2,88 +2,109 @@ package org.mateh.mingle.managers;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.mateh.mingle.Main;
-import org.mateh.mingle.interfaces.Room;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 public class RoomManager {
     private final Main main;
-    private final List<Room> rooms;
+    private final Map<String, Room> rooms = new HashMap<>();
+    private Room lastRoom;
 
     public RoomManager(Main main) {
         this.main = main;
-        this.rooms = new ArrayList<>();
         loadRoomsFromConfig();
     }
 
     public void addRoom(Location corner1, Location corner2) {
-        Room room = new Room(corner1, corner2);
-        rooms.add(room);
+        String roomName = "room_" + (rooms.size() + 1);
+        Room room = new Room(roomName, corner1, corner2);
+        rooms.put(roomName, room);
+        lastRoom = room;
         saveRoomToConfig(room);
     }
 
-    public void setRoomDoor(Location doorLocation) {
-        if (rooms.isEmpty()) {
-            throw new IllegalStateException("No room has been defined yet.");
+    public void setLastRoomDoor(Location doorLocation) {
+        if (lastRoom != null) {
+            lastRoom.setDoorLocation(doorLocation);
+            saveRoomToConfig(lastRoom);
         }
-
-        Room lastRoom = rooms.get(rooms.size() - 1);
-        lastRoom.setDoor(doorLocation);
-        saveRoomToConfig(lastRoom);
-    }
-
-    public List<Room> getRooms() {
-        return rooms;
     }
 
     private void loadRoomsFromConfig() {
         FileConfiguration config = main.getConfig();
-        if (!config.isConfigurationSection("rooms")) return;
+
+        if (!config.contains("rooms")) {
+            return;
+        }
 
         for (String key : config.getConfigurationSection("rooms").getKeys(false)) {
-            Location corner1 = getLocationFromConfig(config, "rooms." + key + ".corner1");
-            Location corner2 = getLocationFromConfig(config, "rooms." + key + ".corner2");
-            Location door = getLocationFromConfig(config, "rooms." + key + ".door");
+            String path = "rooms." + key;
+            Location corner1 = deserializeLocation(config.getString(path + ".corner1"));
+            Location corner2 = deserializeLocation(config.getString(path + ".corner2"));
+            Location door = deserializeLocation(config.getString(path + ".door"));
 
-            Room room = new Room(corner1, corner2);
-            room.setDoor(door);
-            rooms.add(room);
+            if (corner1 != null && corner2 != null) {
+                Room room = new Room(key, corner1, corner2);
+                if (door != null) {
+                    room.setDoorLocation(door);
+                }
+                rooms.put(key, room);
+            }
         }
     }
 
     private void saveRoomToConfig(Room room) {
-        FileConfiguration config = main.getConfig();
-        int roomIndex = rooms.indexOf(room);
-
-        config.set("rooms." + roomIndex + ".corner1", locationToConfigString(room.getCorner1()));
-        config.set("rooms." + roomIndex + ".corner2", locationToConfigString(room.getCorner2()));
-        if (room.getDoor() != null) {
-            config.set("rooms." + roomIndex + ".door", locationToConfigString(room.getDoor()));
+        String path = "rooms." + room.getName();
+        main.getConfig().set(path + ".corner1", serializeLocation(room.getCorner1()));
+        main.getConfig().set(path + ".corner2", serializeLocation(room.getCorner2()));
+        if (room.getDoorLocation() != null) {
+            main.getConfig().set(path + ".door", serializeLocation(room.getDoorLocation()));
         }
-
         main.saveConfig();
     }
 
-    private Location getLocationFromConfig(FileConfiguration config, String path) {
-        if (!config.isString(path)) return null;
-
-        String[] parts = config.getString(path).split(",");
-        World world = Bukkit.getWorld(parts[0]);
-        double x = Double.parseDouble(parts[1]);
-        double y = Double.parseDouble(parts[2]);
-        double z = Double.parseDouble(parts[3]);
-
-        return new Location(world, x, y, z);
+    private String serializeLocation(Location location) {
+        if (location == null) {
+            return null;
+        }
+        return location.getWorld().getName() + "," + location.getX() + "," + location.getY() + "," + location.getZ();
     }
 
-    private String locationToConfigString(Location location) {
-        return location.getWorld().getName() + "," +
-                location.getX() + "," +
-                location.getY() + "," +
-                location.getZ();
+    private Location deserializeLocation(String serialized) {
+        if (serialized == null) {
+            return null;
+        }
+
+        try {
+            String[] parts = serialized.split(",");
+            return new Location(
+                    Bukkit.getWorld(parts[0]),
+                    Double.parseDouble(parts[1]),
+                    Double.parseDouble(parts[2]),
+                    Double.parseDouble(parts[3])
+            );
+        } catch (Exception e) {
+            main.getLogger().warning("Failed to deserialize location: " + serialized);
+            return null;
+        }
+    }
+
+    public Map<String, Room> getRooms() {
+        return rooms;
+    }
+
+    public void lockAllDoors() {
+        for (Room room : rooms.values()) {
+            room.lockDoor();
+        }
+    }
+
+    public void unlockAllDoors() {
+        for (Room room : rooms.values()) {
+            room.unlockDoor();
+        }
     }
 }

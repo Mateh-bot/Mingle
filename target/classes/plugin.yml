@@ -4,5 +4,6 @@ main: org.mateh.mingle.Main
 api-version: '1.20'
 commands:
   mingle:
-    description: Comando mingle.
-    usage: /mingle reload
+    description: Main command to control the game.
+  room:
+    description: Command to manage rooms.

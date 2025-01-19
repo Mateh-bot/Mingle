@@ -1,7 +1,13 @@
 platform:
-  world: "world"
-  centerX: 0.0
-  centerZ: 0.0
-  radius: 20.0
-  rotationSpeed: 0.5
-  minPlayersToEnd: 1
+  centerX: 0        # Coordenada X del centro de la plataforma
+  centerY: 0        # Coordenada X del centro de la plataforma
+  centerZ: 0        # Coordenada Z del centro de la plataforma
+  radius: 20        # Radio de la plataforma
+
+game:
+  minPlayersToEnd: 1  # Mínimo de jugadores para finalizar el juego
+
+rotation:
+  speed: 0.5         # Velocidad de rotación de los jugadores
+
+rooms:

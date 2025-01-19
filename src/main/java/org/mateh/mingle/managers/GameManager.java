@@ -3,30 +3,35 @@ package org.mateh.mingle.managers;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.mateh.mingle.Main;
 
 import java.util.*;
 
-public class GameManager{
+public class GameManager {
 
     private final Main main;
     private final World world;
     private final Location platformCenter;
     private final double platformRadius;
-    private int minPlayersToEnd;
+    private final int minPlayersToEnd;
+    private final RoomManager roomManager;
     private final PlayerRotationManager rotationManager;
     private boolean gameActive = false;
 
-    public GameManager(Main main, World world, Location platformCenter, double platformRadius, int minPlayersToEnd) {
+    public GameManager(Main main, World world, Location platformCenter, double platformRadius) {
         this.main = main;
         this.world = world;
         this.platformCenter = platformCenter;
         this.platformRadius = platformRadius;
-        this.minPlayersToEnd = minPlayersToEnd;
-        this.rotationManager = new PlayerRotationManager(main, world, platformCenter.getX(), platformCenter.getZ(), platformRadius);
+        this.minPlayersToEnd = main.getConfig().getInt("game.minPlayersToEnd");
+        this.roomManager = new RoomManager(main);
+        this.rotationManager = new PlayerRotationManager(main, world,
+                main.getConfig().getDouble("platform.centerX"),
+                main.getConfig().getDouble("platform.centerY"),
+                main.getConfig().getDouble("platform.centerZ"),
+                main.getConfig().getDouble("platform.radius"));
     }
 
     public void startGame() {
@@ -36,7 +41,7 @@ public class GameManager{
         }
 
         gameActive = true;
-        main.getLogger().info("Game starting...");
+        Bukkit.broadcastMessage("Game starting in 10 seconds...");
 
         new BukkitRunnable() {
             private int countdown = 10;
@@ -44,11 +49,11 @@ public class GameManager{
             @Override
             public void run() {
                 if (countdown > 0) {
-                    Bukkit.broadcastMessage("The game starts in " + countdown + " seconds!");
+                    Bukkit.broadcastMessage("Starting in " + countdown + " seconds...");
                     countdown--;
                 } else {
-                    startRound();
                     this.cancel();
+                    startRound();
                 }
             }
         }.runTaskTimer(main, 0L, 20L);
@@ -61,42 +66,50 @@ public class GameManager{
             @Override
             public void run() {
                 rotationManager.stopPlayerRotation();
-                assignRooms();
+                assignGroups();
             }
-        }.runTaskLater(main, 10 * 20L); // 10 seconds of rotation
+        }.runTaskLater(main, 10 * 20L); // 10 seconds
     }
 
-    private void assignRooms() {
-        int requiredGroupSize = new Random().nextInt(5) + 1;
-        Bukkit.broadcastMessage("Form groups of size " + requiredGroupSize + " and enter the rooms! You have 30 seconds.");
+    private void assignGroups() {
+        int requiredGroupSize = new Random().nextInt(1) + 1;
+        Bukkit.broadcastMessage("Form groups of " + requiredGroupSize + " players and enter the rooms! You have 30 seconds.");
 
         new BukkitRunnable() {
             @Override
             public void run() {
-                evaluateRooms(requiredGroupSize);
+                evaluateGroups(requiredGroupSize);
             }
-        }.runTaskLater(main, 30 * 20L); // 30 seconds to form groups
+        }.runTaskLater(main, 30 * 20L); // 30 seconds
     }
 
-    private void evaluateRooms(int requiredGroupSize) {
-        Map<Location, List<Player>> roomOccupants = getRoomOccupants();
+    private void evaluateGroups(int requiredGroupSize) {
+        roomManager.lockAllDoors();
         Set<Player> playersToEliminate = new HashSet<>();
 
-        for (Map.Entry<Location, List<Player>> entry : roomOccupants.entrySet()) {
-            List<Player> playersInRoom = entry.getValue();
+        for (Room room : roomManager.getRooms().values()) {
+            List<Player> playersInRoom = new ArrayList<>();
+            for (Player player : world.getPlayers()) {
+                if (room.isPlayerInside(player.getLocation())) {
+                    playersInRoom.add(player);
+                }
+            }
+
             if (playersInRoom.size() != requiredGroupSize) {
                 playersToEliminate.addAll(playersInRoom);
             }
         }
 
         for (Player player : world.getPlayers()) {
-            if (!isPlayerInAnyRoom(player)) {
+            boolean inAnyRoom = roomManager.getRooms().values().stream().anyMatch(room -> room.isPlayerInside(player.getLocation()));
+            if (!inAnyRoom) {
                 playersToEliminate.add(player);
             }
         }
 
         for (Player player : playersToEliminate) {
             player.setHealth(0.0);
+            Bukkit.broadcastMessage(player.getName() + " has been eliminated!");
         }
 
         int alivePlayers = (int) world.getPlayers().stream().filter(player -> player.getHealth() > 0.0).count();
@@ -108,36 +121,6 @@ public class GameManager{
             Bukkit.broadcastMessage("Starting the next round...");
             startRound();
         }
-    }
-
-    private Map<Location, List<Player>> getRoomOccupants() {
-        Map<Location, List<Player>> roomOccupants = new HashMap<>();
-
-        // Example logic: Replace with actual room locations and detection
-        for (Player player : world.getPlayers()) {
-            Location roomLocation = detectRoom(player);
-            if (roomLocation != null) {
-                roomOccupants.computeIfAbsent(roomLocation, k -> new ArrayList<>()).add(player);
-            }
-        }
-
-        return roomOccupants;
-    }
-
-    private boolean isPlayerInAnyRoom(Player player) {
-        return detectRoom(player) != null;
-    }
-
-    private Location detectRoom(Player player) {
-        // Example detection logic: Replace with actual room boundaries
-        Location location = player.getLocation();
-        if (location.getX() < 50 && location.getZ() < 50) {
-            return new Location(world, 25, location.getY(), 25); // Example room location
-        }
-        return null;
-    }
-
-    public void reloadConfig(FileConfiguration config) {
-        this.minPlayersToEnd = config.getInt("minPlayersToEnd", 1);
+        roomManager.unlockAllDoors();
     }
 }

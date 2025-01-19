@@ -2,53 +2,37 @@ package org.mateh.mingle;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.World;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.mateh.mingle.commands.MingleCommand;
+import org.mateh.mingle.commands.RoomCommand;
+import org.mateh.mingle.listeners.DoorListener;
 import org.mateh.mingle.managers.GameManager;
+import org.mateh.mingle.managers.RoomManager;
 
 public final class Main extends JavaPlugin {
 
     private GameManager gameManager;
-    private FileConfiguration config;
+    private RoomManager roomManager;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        config = getConfig();
 
-        World world = Bukkit.getWorld(config.getString("platform.world"));
-        double centerX = config.getDouble("platform.centerX");
-        double centerZ = config.getDouble("platform.centerZ");
-        double radius = config.getDouble("platform.radius");
-        int minPlayersToEnd = config.getInt("minPlayersToEnd");
+        this.roomManager = new RoomManager(this);
+        Location platformCenter = new Location(Bukkit.getWorld("world"),
+                getConfig().getDouble("platform.centerX"),
+                getConfig().getDouble("platform.centerY"),
+                getConfig().getDouble("platform.centerZ"));
+        double platformRadius = getConfig().getDouble("platform.radius");
+        this.gameManager = new GameManager(this, Bukkit.getWorld("world"), platformCenter, platformRadius);
 
-        Location platformCenter = new Location(world, centerX, world.getHighestBlockYAt((int) centerX, (int) centerZ), centerZ);
-        gameManager = new GameManager(this, world, platformCenter, radius, minPlayersToEnd);
+        getCommand("mingle").setExecutor(new MingleCommand(gameManager));
+        getCommand("room").setExecutor(new RoomCommand(roomManager));
 
-        getLogger().info("Mingle plugin enabled!");
+        getServer().getPluginManager().registerEvents(new DoorListener(roomManager), this);
     }
 
     @Override
     public void onDisable() {
-    }
-
-    @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (command.getName().equalsIgnoreCase("mingle")) {
-            if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
-                reloadConfig();
-                config = getConfig();
-                gameManager.reloadConfig(config);
-                sender.sendMessage("Configuration reloaded.");
-                return true;
-            } else if (args.length == 0) {
-                gameManager.startGame();
-                return true;
-            }
-        }
-        return false;
     }
 }
