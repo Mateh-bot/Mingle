@@ -1,100 +1,143 @@
 package org.mateh.mingle.managers;
 
 import org.bukkit.Bukkit;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
-import org.bukkit.command.CommandSender;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitRunnable;
 import org.mateh.mingle.Main;
 
-import java.util.Collections;
-import java.util.Objects;
-import java.util.Random;
+import java.util.*;
 
-public class GameManager implements CommandExecutor {
+public class GameManager{
+
     private final Main main;
-    private final RoomManager roomManager;
-    private final PlayerManager playerManager;
-    private final PlatformManager platformManager;
-    private boolean gameRunning = false;
-    private int randomGroupSize;
+    private final World world;
+    private final Location platformCenter;
+    private final double platformRadius;
+    private int minPlayersToEnd;
+    private final PlayerRotationManager rotationManager;
+    private boolean gameActive = false;
 
-    public GameManager(Main main) {
+    public GameManager(Main main, World world, Location platformCenter, double platformRadius, int minPlayersToEnd) {
         this.main = main;
-        this.roomManager = new RoomManager();
-        this.playerManager = new PlayerManager();
-        this.platformManager = new PlatformManager(main);
-    }
-
-    @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (command.getName().equalsIgnoreCase("mingle")) {
-            if (gameRunning) {
-                sender.sendMessage("A game is already running!");
-                return true;
-            }
-
-            startGame();
-            return true;
-        }
-        return false;
+        this.world = world;
+        this.platformCenter = platformCenter;
+        this.platformRadius = platformRadius;
+        this.minPlayersToEnd = minPlayersToEnd;
+        this.rotationManager = new PlayerRotationManager(main, world, platformCenter.getX(), platformCenter.getZ(), platformRadius);
     }
 
     public void startGame() {
-        gameRunning = true;
-        playerManager.resetPlayers(Bukkit.getOnlinePlayers());
-        platformManager.createPlatform();
-
-        Bukkit.broadcastMessage("Game starts in 10 seconds!");
-
-        Bukkit.getScheduler().runTaskLater(main, platformManager::replaceWithBarrierAndStartRotation, 200L);
-
-        Bukkit.getScheduler().runTaskLater(main, this::handleRotationEnd, 400L);
-    }
-
-    private void handleRotationEnd() {
-        platformManager.stopRotation();
-        platformManager.restorePlatform();
-
-        startRoomPhase();
-    }
-
-    private void startRoomPhase() {
-        randomGroupSize = new Random().nextInt(1) + 1;
-        Bukkit.broadcastMessage("The required group size is: " + randomGroupSize);
-        Bukkit.broadcastMessage("You have 30 seconds to enter a room with the correct group size!");
-
-        Bukkit.getScheduler().runTaskLater(main, () -> {
-            roomManager.updateRoomOccupants(Bukkit.getOnlinePlayers());
-            roomManager.checkRooms(randomGroupSize, playerManager);
-
-            if (playerManager.getAlivePlayers().size() <= randomGroupSize) {
-                endGame();
-            } else {
-                startGame();
-            }
-        }, 600L);
-    }
-
-    private void endGame() {
-        gameRunning = false;
-
-        Player winner = playerManager.getAlivePlayers().stream()
-                .map(Bukkit::getPlayer)
-                .filter(Objects::nonNull)
-                .findFirst()
-                .orElse(null);
-
-        if (winner != null) {
-            Bukkit.broadcastMessage(winner.getName() + " is the winner!");
-        } else {
-            Bukkit.broadcastMessage("No winners this round!");
+        if (gameActive) {
+            main.getLogger().info("The game is already active.");
+            return;
         }
 
-        resetGame();
+        gameActive = true;
+        main.getLogger().info("Game starting...");
+
+        new BukkitRunnable() {
+            private int countdown = 10;
+
+            @Override
+            public void run() {
+                if (countdown > 0) {
+                    Bukkit.broadcastMessage("The game starts in " + countdown + " seconds!");
+                    countdown--;
+                } else {
+                    startRound();
+                    this.cancel();
+                }
+            }
+        }.runTaskTimer(main, 0L, 20L);
     }
 
-    private void resetGame() {
-        playerManager.resetPlayers(Collections.emptySet());
+    private void startRound() {
+        rotationManager.startPlayerRotation();
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                rotationManager.stopPlayerRotation();
+                assignRooms();
+            }
+        }.runTaskLater(main, 10 * 20L); // 10 seconds of rotation
+    }
+
+    private void assignRooms() {
+        int requiredGroupSize = new Random().nextInt(5) + 1;
+        Bukkit.broadcastMessage("Form groups of size " + requiredGroupSize + " and enter the rooms! You have 30 seconds.");
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                evaluateRooms(requiredGroupSize);
+            }
+        }.runTaskLater(main, 30 * 20L); // 30 seconds to form groups
+    }
+
+    private void evaluateRooms(int requiredGroupSize) {
+        Map<Location, List<Player>> roomOccupants = getRoomOccupants();
+        Set<Player> playersToEliminate = new HashSet<>();
+
+        for (Map.Entry<Location, List<Player>> entry : roomOccupants.entrySet()) {
+            List<Player> playersInRoom = entry.getValue();
+            if (playersInRoom.size() != requiredGroupSize) {
+                playersToEliminate.addAll(playersInRoom);
+            }
+        }
+
+        for (Player player : world.getPlayers()) {
+            if (!isPlayerInAnyRoom(player)) {
+                playersToEliminate.add(player);
+            }
+        }
+
+        for (Player player : playersToEliminate) {
+            player.setHealth(0.0);
+        }
+
+        int alivePlayers = (int) world.getPlayers().stream().filter(player -> player.getHealth() > 0.0).count();
+
+        if (alivePlayers <= minPlayersToEnd) {
+            Bukkit.broadcastMessage("Game over! " + alivePlayers + " player(s) remain.");
+            gameActive = false;
+        } else {
+            Bukkit.broadcastMessage("Starting the next round...");
+            startRound();
+        }
+    }
+
+    private Map<Location, List<Player>> getRoomOccupants() {
+        Map<Location, List<Player>> roomOccupants = new HashMap<>();
+
+        // Example logic: Replace with actual room locations and detection
+        for (Player player : world.getPlayers()) {
+            Location roomLocation = detectRoom(player);
+            if (roomLocation != null) {
+                roomOccupants.computeIfAbsent(roomLocation, k -> new ArrayList<>()).add(player);
+            }
+        }
+
+        return roomOccupants;
+    }
+
+    private boolean isPlayerInAnyRoom(Player player) {
+        return detectRoom(player) != null;
+    }
+
+    private Location detectRoom(Player player) {
+        // Example detection logic: Replace with actual room boundaries
+        Location location = player.getLocation();
+        if (location.getX() < 50 && location.getZ() < 50) {
+            return new Location(world, 25, location.getY(), 25); // Example room location
+        }
+        return null;
+    }
+
+    public void reloadConfig(FileConfiguration config) {
+        this.minPlayersToEnd = config.getInt("minPlayersToEnd", 1);
     }
 }
